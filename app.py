@@ -3,6 +3,7 @@ from flask_cors import CORS
 import pypandoc
 import os
 import tempfile
+import re # We need this to find and fix weird AI code!
 
 # This forces Render to download the core Pandoc software
 pypandoc.download_pandoc()
@@ -19,11 +20,20 @@ def convert_to_word():
     data = request.json
     text = data.get('text', '')
 
-    # --- THE CHATGPT FIX ---
-    # Convert ChatGPT's math brackets into standard LaTeX dollar signs
+    # --- THE ULTIMATE AI CLEANUP SCRIPT ---
+    # 1. Fix standard ChatGPT brackets
     text = text.replace(r'\[', '$$').replace(r'\]', '$$')
     text = text.replace(r'\(', '$').replace(r'\)', '$')
-    # -----------------------
+    
+    # 2. Fix Microsoft Copilot's weird "genui" math widgets
+    # This finds that ugly JSON string and extracts just the math formula!
+    text = re.sub(r'genui.*?\"content\":\s*\"(.*?)\".*?', r'$$\1$$', text)
+
+    # 3. Fix broken brackets that lost their backslashes during a bad copy-paste
+    # This turns a [ on its own line into a $$
+    text = re.sub(r'(?m)^\[\s*$', '$$', text) 
+    text = re.sub(r'(?m)^\]\s*$', '$$', text)
+    # --------------------------------------
 
     with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as tmp:
         output_path = tmp.name
