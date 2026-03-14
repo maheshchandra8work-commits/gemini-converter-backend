@@ -5,6 +5,7 @@ import os
 import tempfile
 import re
 
+# This forces Render to download the core Pandoc software
 pypandoc.download_pandoc()
 
 app = Flask(__name__)
@@ -22,22 +23,21 @@ def convert_to_word():
     # --- THE OMNI-AI CLEANUP SCRIPT ---
     
     # 1. Rescue math formulas trapped inside ChatGPT's hidden JSON widgets
-    text = re.sub(r'genui[^]*"content":\s*"([^"]+)"[^]*', r'$$\1$$', text)
+    text = re.sub(r'genui[^]*"content":\s*"([^"]+)"[^]*', r'$$\n\1\n$$', text)
     
     # 2. Delete any leftover invisible ChatGPT tracking artifacts
     text = re.sub(r'[^]+', '', text)
     
-    # 3. Fix standard Markdown Display Math (Gemini/Copilot: \[ ... \])
-    text = re.sub(r'\\\[(.*?)\\\]', r'$$\1$$', text, flags=re.DOTALL)
+    # 3. Fix broken Display Math from bad copy-pasting (ChatGPT's plain [ and ])
+    text = re.sub(r'^\[\s*$', '$$', text, flags=re.MULTILINE)
+    text = re.sub(r'^\]\s*$', '$$', text, flags=re.MULTILINE)
     
-    # 4. Fix standard Markdown Inline Math (Gemini/Copilot: \( ... \))
-    text = re.sub(r'\\\((.*?)\\\)', r'$\1$', text, flags=re.DOTALL)
+    # 4. Fix standard Markdown Display Math (\[ ... \])
+    text = text.replace(r'\[', '$$').replace(r'\]', '$$')
     
-    # 5. Fix broken Display Math from bad copy-pasting (ChatGPT: [ math ])
-    # If a line starts with a single [, and ends with ] a few lines later
-    text = re.sub(r'(?m)^\[\s*$\n(.*?)\n^\s*\]\s*$', r'$$\1$$', text, flags=re.MULTILINE)
+    # 5. Fix standard Markdown Inline Math (\( ... \))
+    text = text.replace(r'\(', '$').replace(r'\)', '$')
     
-    # 6. Ensure Pandoc interprets the math properly
     with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as tmp:
         output_path = tmp.name
         
