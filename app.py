@@ -67,10 +67,11 @@ def convert_to_word():
         
     try:
         # Step 1: Standard One-Step Pandoc Conversion (Preserves all math, tables, and bolding)
+        # ADDED: +hard_line_breaks to ensure MCQs and options don't get squished
         pypandoc.convert_text(
             text, 
             'docx', 
-            format='markdown', 
+            format='markdown+hard_line_breaks', 
             outputfile=output_path
         )
         
