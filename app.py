@@ -4,6 +4,7 @@ import pypandoc
 import os
 import tempfile
 import re
+from bs4 import BeautifulSoup
 
 # This forces Render to download the core Pandoc software
 pypandoc.download_pandoc()
@@ -38,17 +39,11 @@ def convert_to_word():
     # 5. Fix standard Markdown Inline Math
     text = text.replace(r'\(', '$').replace(r'\)', '$')
 
-    # NEW: 6. Fix HTML alignment attributes so Word understands them
-    # Word/Pandoc ignores raw align="center", but understands CSS text-align.
-    text = re.sub(r'\balign="([^"]+)"', r'style="text-align: \1;"', text)
-    
     with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as tmp:
         output_path = tmp.name
         
     try:
-        # THE FIX: Two-Step Conversion Pipeline
-        
-        # Step A: Convert mixed Markdown + HTML into pure HTML (using MathML for equations)
+        # Step A: Convert Markdown to HTML
         html_intermediate = pypandoc.convert_text(
             text, 
             'html', 
@@ -56,7 +51,31 @@ def convert_to_word():
             extra_args=['--mathml']
         )
         
-        # Step B: Convert the resulting HTML directly into Word
+        # --- THE HTML ALIGNMENT INJECTOR ---
+        soup = BeautifulSoup(html_intermediate, 'html.parser')
+        
+        # Catch 1: Find AI divs with <div align="center|right">
+        for div in soup.find_all('div', align=True):
+            alignment = div['align']
+            # Push the alignment directly into the child paragraphs and headings
+            for tag in div.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
+                existing_style = tag.get('style', '')
+                tag['style'] = f"{existing_style} text-align: {alignment};".strip()
+        
+        # Catch 2: Find AI divs with <div style="text-align: center|right;">
+        for div in soup.find_all('div', style=re.compile(r'text-align:\s*(left|center|right|justify)')):
+            match = re.search(r'text-align:\s*(left|center|right|justify)', div['style'])
+            if match:
+                alignment = match.group(1)
+                # Push the alignment directly into the child paragraphs and headings
+                for tag in div.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
+                    existing_style = tag.get('style', '')
+                    tag['style'] = f"{existing_style} text-align: {alignment};".strip()
+        
+        # Convert the modified Soup object back to a string
+        html_intermediate = str(soup)
+        
+        # Step B: Convert the heavily corrected HTML directly into Word
         pypandoc.convert_text(
             html_intermediate, 
             'docx', 
