@@ -5,7 +5,7 @@ import os
 import tempfile
 import re
 import docx
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
 
 # This forces Render to download the core Pandoc software
 pypandoc.download_pandoc()
@@ -21,6 +21,9 @@ def home():
 def convert_to_word():
     data = request.json
     text = data.get('text', '')
+    
+    # Normalize line endings to prevent splitting errors
+    text = text.replace('\r\n', '\n')
     
     # --- THE OMNI-AI CLEANUP SCRIPT ---
     
@@ -48,12 +51,15 @@ def convert_to_word():
     text = re.sub(r'<strong[^>]*>(.*?)</strong>', r'**\1**', text, flags=re.IGNORECASE | re.DOTALL)
     text = re.sub(r'<b[^>]*>(.*?)</b>', r'**\1**', text, flags=re.IGNORECASE | re.DOTALL)
 
+    # --- PAGE BREAK SYSTEM ---
+    # Convert HTML page breaks into an invisible marker
+    text = re.sub(r'<div\s+style="[^"]*page-break-after:\s*always;?[^"]*">\s*</div>', '\n\nOMNI_PAGE_BREAK\n\n', text, flags=re.IGNORECASE)
+
     # --- THE ALIGNMENT MARKER SYSTEM ---
     # Convert HTML alignment divs into invisible markers that Python will read later
     def align_replacer(match):
         alignment = match.group(1).upper()
         content = match.group(2).strip()
-        # Adding newlines ensures Pandoc treats the markers as separate, easily detectable paragraphs
         return f"\n\nOMNI_ALIGN_{alignment}_START\n\n{content}\n\nOMNI_ALIGN_END\n\n"
 
     # Catch <div align="center"> or <div align="right">
@@ -62,12 +68,34 @@ def convert_to_word():
     # Catch <div style="text-align: center;">
     text = re.sub(r'<div\s+style="[^"]*text-align:\s*(center|right|left|justify)[^"]*">\s*(.*?)\s*</div>', align_replacer, text, flags=re.IGNORECASE | re.DOTALL)
 
+    # --- LIST & TABLE SPACING FIX ---
+    # Because of hard_line_breaks, tables and lists merge with text if there's no blank line.
+    # This automatically detects missing blank lines and injects them.
+    lines = text.split('\n')
+    for i in range(1, len(lines)):
+        prev_line = lines[i-1].strip()
+        curr_line = lines[i].strip()
+        
+        # If current line starts a table, and previous line is text (not a pipe or empty)
+        if curr_line.startswith('|') and prev_line and not prev_line.startswith('|'):
+            lines[i] = '\n' + lines[i]
+            
+        # If current line is a list item, and previous line is text (not empty, not list, not heading)
+        is_curr_list = bool(re.match(r'^(\*|-|\+|\d+\.)\s+', curr_line))
+        is_prev_list = bool(re.match(r'^(\*|-|\+|\d+\.)\s+', prev_line))
+        is_prev_heading = prev_line.startswith('#')
+        
+        if is_curr_list and prev_line and not is_prev_list and not is_prev_heading:
+            lines[i] = '\n' + lines[i]
+            
+    text = '\n'.join(lines)
+
+
     with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as tmp:
         output_path = tmp.name
         
     try:
-        # Step 1: Standard One-Step Pandoc Conversion (Preserves all math, tables, and bolding)
-        # ADDED: +hard_line_breaks to ensure MCQs and options don't get squished
+        # Step 1: Standard One-Step Pandoc Conversion 
         pypandoc.convert_text(
             text, 
             'docx', 
@@ -75,13 +103,19 @@ def convert_to_word():
             outputfile=output_path
         )
         
-        # Step 2: Native Word Alignment Post-Processing
+        # Step 2: Native Word Alignment & Page Break Post-Processing
         doc = docx.Document(output_path)
         align_mode = None
         paragraphs_to_delete = []
         
         for p in doc.paragraphs:
             p_text = p.text.strip()
+            
+            # Detect Page Break Marker and inject native Word page break
+            if p_text == "OMNI_PAGE_BREAK":
+                p.text = ""
+                p.add_run().add_break(WD_BREAK.PAGE)
+                continue
             
             # Detect Start Marker
             if p_text.startswith("OMNI_ALIGN_") and p_text.endswith("_START"):
